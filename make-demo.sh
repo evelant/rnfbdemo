@@ -47,8 +47,8 @@ fi
 
 echo "Testing react-native current + react-native-firebase current + Firebase SDKs current"
 
-if ! which yarn > /dev/null 2>&1; then
-  echo "This script uses yarn, please install yarn (for example \`npm i yarn -g\` and re-try"
+if ! which pnpm > /dev/null 2>&1; then
+  echo "This script uses pnpm, please install pnpm (for example \`npm i pnpm -g\` and re-try"
   exit 1
 fi
 #######################################################################################################
@@ -65,21 +65,39 @@ fi
 npm_config_yes=true npx @react-native-community/cli init rnfbdemo --skip-install --version=0.70.1
 cd rnfbdemo
 
+# set auto-install peer deps for pnpm since react-native by default is missing declaration of a bunch of deps
+echo "auto-install-peers=true" > .npmrc
+
 # New versions of react-native include annoying Ruby stuff that forces use of old rubies. Obliterate.
 if [ -f Gemfile ]; then
   rm -f Gemfile* .ruby*
 fi
 
 # Now run our initial dependency install
-yarn
-npm_config_yes=true npx pod-install
+pnpm install
+
+# add undeclared dependencies missing from rn template
+pnpm install @react-native-community/cli-platform-ios @react-native-community/cli-platform-android
+
+# add symlink support to metro
+pnpm install @rnx-kit/metro-resolver-symlinks
+sed -i -e '1i\
+const MetroSymlinksResolver = require("@rnx-kit/metro-resolver-symlinks")
+' metro.config.js
+sed -i -e $'s/transformer: {/resolver: { resolveRequest = MetroSymlinksResolver() },\\\ntransformer: {/' metro.config.js
+
+#resolver.resolveRequest = MetroSymlinksResolver()
+# add metro config
+
+
+npm_config_yes=true pnpm pnpx pod-install
 
 
 # At this point we have a clean react-native project. Absolutely stock from the upstream template.
 
 # Required: This is the most basic part of the integration - include google services plugin and call to firebase init on iOS
 echo "Adding react-native-firebase core app package"
-yarn add "@react-native-firebase/app"
+pnpm install "@react-native-firebase/app"
 echo "Adding basic iOS integration - AppDelegate import and config call"
 sed -i -e $'s/AppDelegate.h"/AppDelegate.h"\\\n#import <Firebase.h>/' ios/rnfbdemo/AppDelegate.m*
 rm -f ios/rnfbdemo/AppDelegate.m*-e
@@ -163,7 +181,7 @@ fi
 # From this point on we are adding optional modules. We test them all so we add them all. You only need to add what you need.
 # First set up all the modules that need no further config for the demo 
 echo "Adding packages: Analytics, App Check, Auth, Database, Dynamic Links, Firestore, Functions, In App Messaging, Installations, Messaging, ML, Remote Config, Storage"
-yarn add \
+pnpm install \
   @react-native-firebase/analytics \
   @react-native-firebase/app-check \
   @react-native-firebase/auth \
@@ -179,7 +197,7 @@ yarn add \
 
 # Optional: Crashlytics - repo, classpath, plugin, dependency, import, init
 echo "Setting up Crashlytics - package, gradle plugin"
-yarn add "@react-native-firebase/crashlytics"
+pnpm install "@react-native-firebase/crashlytics"
 sed -i -e $'s/dependencies {/dependencies {\\\n        classpath "com.google.firebase:firebase-crashlytics-gradle:2.9.2"/' android/build.gradle
 rm -f android/build.gradle??
 sed -i -e $'s/"com.google.gms.google-services"/"com.google.gms.google-services"\\\napply plugin: "com.google.firebase.crashlytics"/' android/app/build.gradle
@@ -189,7 +207,7 @@ rm -f android/app/build.gradle??
 
 # Optional: Performance - classpath, plugin, dependency, import, init
 echo "Setting up Performance - package, gradle plugin"
-yarn add "@react-native-firebase/perf"
+pnpm install "@react-native-firebase/perf"
 rm -f android/app/build.gradle??
 sed -i -e $'s/dependencies {/dependencies {\\\n        classpath "com.google.firebase:perf-plugin:1.4.1"/' android/build.gradle
 rm -f android/build.gradle??
@@ -198,7 +216,7 @@ rm -f android/app/build.gradle??
 
 # Optional: App Distribution - classpath, plugin, dependency, import, init
 echo "Setting up Crashlytics - package, gradle plugin"
-yarn add "@react-native-firebase/app-distribution"
+pnpm install "@react-native-firebase/app-distribution"
 sed -i -e $'s/dependencies {/dependencies {\\\n        classpath "com.google.firebase:firebase-appdistribution-gradle:3.0.3"/' android/build.gradle
 rm -f android/build.gradle??
 
@@ -247,22 +265,22 @@ rm ./App.js && cp ../App.js ./App.js
 # Test: You have to re-run patch-package after yarn since it is not integrated into postinstall, so run it again
 echo "Running any patches necessary to compile successfully"
 cp -rv ../patches .
-npm_config_yes=true npx patch-package
+#npm_config_yes=true npx patch-package
 
 # Test: Run the thing for iOS
 if [ "$(uname)" == "Darwin" ]; then
 
   echo "Installing pods and running iOS app in debug mode"
-  npm_config_yes=true npx pod-install
+  npm_config_yes=true pnpm pnpx pod-install
 
   # Check iOS debug mode compile
-  npx react-native run-ios
+  pnpm react-native run-ios
 
   # Check iOS release mode compile
   echo "Installing pods and running iOS app in release mode"
   # Note: Flipper is disabled, but to make sure it is not included in release builds you have to set PRODUCTION=1 for release
   # https://github.com/reactwg/react-native-releases/discussions/26#discussioncomment-3398711
-  PRODUCTION=1  npx react-native run-ios --configuration "Release"
+  PRODUCTION=1  pnpm react-native run-ios --configuration "Release"
 
   # Optional: Check catalyst build
   if ! [ "$XCODE_DEVELOPMENT_TEAM" == "" ]; then
@@ -286,7 +304,7 @@ if [ "$(uname)" == "Darwin" ]; then
     sed -i -e $'s/mac_catalyst_enabled => false/mac_catalyst_enabled => true/' ios/Podfile
 
     echo "Installing pods and running iOS app in macCatalyst mode"
-    npm_config_yes=true npx pod-install
+    npm_config_yes=true pnpm pnpx pod-install
 
     # Now run it with our mac device name as device target, that triggers catalyst build
     # Need to check if the development team id is valid? error 70 indicates team not added as account / cert not present / xcode does not have access to keychain?
@@ -297,7 +315,7 @@ if [ "$(uname)" == "Darwin" ]; then
     CATALYST_DESTINATION=$(xcodebuild -workspace ios/rnfbdemo.xcworkspace -configuration Debug -scheme rnfbdemo -destination id=7153382A-C92B-5798-BEA3-D82D195F25F8 2>&1|grep macOS|grep Catalyst|head -1 |cut -d':' -f5 |cut -d' ' -f1)
 
     # WIP This requires a CLI patch to the iOS platform to accept a UDID it cannot probe, and to set type to catalyst
-    npx react-native run-ios --udid "$CATALYST_DESTINATION"
+    pnpm react-native run-ios --udid "$CATALYST_DESTINATION"
   fi
 
   # Optiona: workaround for poorly setup Android SDK environments on macs
@@ -324,7 +342,7 @@ if [ "$(uname -a | grep Linux | grep -c microsoft)" == "1" ]; then
   \rm -fr node_modules
   echo "To run the app use Windows Powershell in the rnfbdemo directory with these commands:"
   echo "npm i"
-  echo "npx react-native run-android"
+  echo "pnpm react-native run-android"
   exit
 fi
 
@@ -335,7 +353,7 @@ popd
 
 # Test: Run it for Android (assumes you have an android emulator running)
 echo "Running android app in release mode"
-npx react-native run-android --variant release
+pnpm react-native run-android --variant release
 
 # Test: Let it start up, then uninstall it (otherwise ABI-split-generated version codes will prevent debug from installing)
 sleep 30
@@ -346,4 +364,4 @@ popd
 # Test: may or may not be commented out, depending on if have an emulator available
 # I run it manually in testing when I have one, comment if you like
 echo "Running android app in debug mode"
-npx react-native run-android
+pnpm react-native run-android
